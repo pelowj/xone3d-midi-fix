@@ -10,8 +10,8 @@ MIDI port stays offline in Audio MIDI Setup: no controls reach your DJ software,
 lights up.
 
 The firmware declares its two USB-MIDI endpoints with a maximum packet size of 4 bytes. The USB
-specification only allows 8, 16, 32 or 64 for this kind of endpoint. Older macOS, Windows and Linux
-tolerate it; current macOS refuses to create the endpoints, so the MIDI port never comes up.
+specification only allows 8, 16, 32 or 64 for this kind of endpoint. Current macOS refuses to
+create the endpoints, so the MIDI port never comes up.
 
 ## The fix
 
@@ -21,7 +21,8 @@ it with A&H's own update protocol. Seven bytes change in total. The version stil
 
 The firmware itself is Allen & Heath's and is not included here. Download it from A&H.
 
-Windows and Linux users don't need this: the stock firmware already works there.
+Windows and Linux users probably don't need this. Forum reports suggest the stock firmware's MIDI
+works on both, but that hasn't been confirmed here.
 
 ## What you need
 
