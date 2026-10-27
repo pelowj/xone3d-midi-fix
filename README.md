@@ -45,14 +45,21 @@ works on both, but that hasn't been confirmed here.
 
 ```sh
 make
+./x3dfix --check                           # is the fix already installed? reads only
 ./x3dfix "XONE3D 1.26.BIN"                 # dry run: checks the file, reads the mixer, writes nothing
 caffeinate -dims ./x3dfix --flash "XONE3D 1.26.BIN"
 ```
 
+`--flash` shows a warning and asks you to type `yes` before it writes anything. It reads your answer
+from the terminal itself, so it can't be answered by a script or an AI agent on your behalf; `--yes`
+skips the question if you've deliberately decided to.
+
 The update takes about a minute. Don't unplug the mixer or let the Mac sleep while it runs
 (`caffeinate` prevents sleep). When it finishes, power the Xone:3D off and on again.
 
-Then open Audio MIDI Setup → MIDI Studio: the Xone3d device should be online. The 3D sends on
+Then run `./x3dfix --check` again: it should say `PATCHED` and `Xone3d online`. (The firmware
+version still reads v1.26 either way; `--check` tells them apart by the MIDI endpoint sizes.) You
+can also open Audio MIDI Setup → MIDI Studio, where the Xone3d device should be online. The 3D sends on
 the MIDI channel set on the unit (channel 16 by default).
 
 `./x3dfix --save patched.BIN "XONE3D 1.26.BIN"` writes the patched image to a file without touching
@@ -79,6 +86,9 @@ To go back to stock firmware, flash the unmodified 1.26 with A&H's own utility o
 
 - `x3dfix.c`: the patcher and flasher (one file, IOKit only).
 - `PROTOCOL.md`: the Xone:3D firmware update protocol and the details of the patch.
+- `AGENTS.md` (and `CLAUDE.md`, which loads it): instructions for AI coding agents such as
+  Claude Code, if you'd like one to walk you through the fix. They tell the agent to ask before
+  flashing and how to recover from a failed update.
 
 ## Licence
 

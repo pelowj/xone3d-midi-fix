@@ -13,12 +13,16 @@
 //   2  OUT  2  write routing word            7  OUT 16  write one 16-byte firmware block
 //
 // Default is a dry run: checks and patches the file in memory, reads the mixer's version, and
-// sends nothing that changes the mixer. Writing needs --flash.
+// sends nothing that changes the mixer. --check reports whether the fix is installed, also
+// without writing anything. Writing needs --flash, plus typing "yes" at the terminal (or --yes).
 //
-// Build: clang -O2 -Wall -o x3dfix x3dfix.c -framework IOKit -framework CoreFoundation
+// Build: clang -O2 -Wall -o x3dfix x3dfix.c -framework IOKit -framework CoreFoundation -framework CoreMIDI
+// Add -DX3D_NO_WRITES for a test build that refuses every OUT request.
 
 #include <CommonCrypto/CommonDigest.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <CoreMIDI/CoreMIDI.h>
+#include <fcntl.h>
 #include <IOKit/IOCFPlugIn.h>
 #include <IOKit/IOKitLib.h>
 #include <IOKit/usb/IOUSBLib.h>
@@ -47,6 +51,9 @@ static const struct { unsigned off; unsigned char from, to; } PATCH[] = {
 static IOUSBDeviceInterface **dev;
 
 static IOReturn vreq(UInt8 dirType, UInt8 bRequest, void *buf, UInt16 len, UInt32 *done) {
+#ifdef X3D_NO_WRITES
+    if (dirType == 0x42) { fprintf(stderr, "[test build] refusing OUT request %d\n", bRequest); return kIOReturnNotPermitted; }
+#endif
     IOUSBDevRequestTO r = {0};
     r.bmRequestType = dirType;          // 0xC2 IN or 0x42 OUT: vendor, endpoint recipient
     r.bRequest = bRequest;
@@ -121,22 +128,116 @@ static int read_version(char *out) {
     return 0;
 }
 
+// Standard GET_DESCRIPTOR(configuration) on endpoint 0.
+static int get_config_desc(unsigned char *buf, UInt16 len) {
+    IOUSBDevRequestTO r = {0};
+    r.bmRequestType = 0x80; r.bRequest = 6; r.wValue = 0x0200; r.wIndex = 0;
+    r.wLength = len; r.pData = buf;
+    r.noDataTimeout = r.completionTimeout = 5000;
+    IOReturn kr = (*dev)->DeviceRequestTO(dev, &r);
+    if (kr) { fprintf(stderr, "GET_DESCRIPTOR failed 0x%08x\n", kr); return -1; }
+    return (int)r.wLenDone;
+}
+
+// --check: is the fix installed? Reads only. Exit 0 = patched, 10 = stock (fix not installed).
+static int check_mixer(void) {
+    char ver[17];
+    if (read_version(ver)) return 1;
+    unsigned char st[6] = {0}; UInt16 routing = 0;
+    if (vreq(IN, 6, st, 6, NULL) || vreq(IN, 1, &routing, 2, NULL)) { fprintf(stderr, "status read failed\n"); return 1; }
+    printf("firmware:  \"%s\"\n", ver);
+    printf("status:    %02x %02x %02x %02x %02x %02x (%s)\n", st[0], st[1], st[2], st[3], st[4], st[5],
+           (st[5] & 1) ? "BUSY: an update is in progress or stuck" : "idle");
+    printf("routing:   0x%04x (MIDI channel %d)\n", routing, ((routing >> 4) & 0xF) + 1);
+
+    unsigned char cfg[1024];
+    int n = get_config_desc(cfg, 9);
+    if (n < 9) return 1;
+    unsigned total = cfg[2] | cfg[3] << 8;
+    if (total > sizeof cfg) total = sizeof cfg;
+    if ((n = get_config_desc(cfg, (UInt16)total)) < 9) return 1;
+    int mps_out = -1, mps_in = -1, in_midi = 0;
+    for (int j = 0; j + 1 < n && cfg[j] >= 2; j += cfg[j]) {
+        if (cfg[j + 1] == 0x04) in_midi = cfg[j + 5] == 0x01 && cfg[j + 6] == 0x03;   // interface
+        else if (cfg[j + 1] == 0x05 && in_midi && cfg[j] >= 7) {                      // endpoint
+            int mps = cfg[j + 4] | cfg[j + 5] << 8;
+            if (cfg[j + 2] == 0x03) mps_out = mps;
+            if (cfg[j + 2] == 0x83) mps_in = mps;
+        }
+    }
+    printf("MIDI EPs:  0x03 %d bytes, 0x83 %d bytes\n", mps_out, mps_in);
+
+    MIDIClientRef client = 0;
+    MIDIClientCreate(CFSTR("x3dfix"), NULL, NULL, &client);
+    int online = -1;
+    for (ItemCount i = 0; i < MIDIGetNumberOfDevices(); i++) {
+        MIDIDeviceRef d = MIDIGetDevice(i); CFStringRef name = NULL; SInt32 off = 1;
+        if (MIDIObjectGetStringProperty(d, kMIDIPropertyName, &name) || !name) continue;
+        if (CFStringCompare(name, CFSTR("Xone3d"), 0) == kCFCompareEqualTo) {
+            MIDIObjectGetIntegerProperty(d, kMIDIPropertyOffline, &off);
+            if (online != 1) online = !off;   // macOS can keep stale offline entries; any online one counts
+        }
+        CFRelease(name);
+    }
+    printf("CoreMIDI:  %s\n", online == 1 ? "Xone3d online" : online == 0 ? "Xone3d OFFLINE" : "no Xone3d device");
+
+    if (mps_out == 8 && mps_in == 8) {
+        printf("result:    PATCHED, the MIDI fix is installed.%s\n",
+               online == 1 ? "" : " (MIDI not online yet: power-cycle the mixer and replug USB.)");
+        return 0;
+    }
+    if (mps_out == 4 && mps_in == 4) {
+        printf("result:    STOCK firmware, the MIDI fix is not installed.\n");
+        return 10;
+    }
+    printf("result:    UNKNOWN endpoint sizes, this is neither stock 1.26 nor the fix. Don't flash.\n");
+    return 1;
+}
+
+// Asks the person at the terminal. Reads /dev/tty, not stdin, so piping "yes" in doesn't count.
+static int confirm_flash(void) {
+    int fd = open("/dev/tty", O_RDWR);
+    if (fd < 0) {
+        fprintf(stderr, "\n--flash needs you to confirm at a terminal, and there is none here.\n"
+                        "Run it yourself in Terminal, or add --yes if you have deliberately accepted the risk.\n");
+        return -1;
+    }
+    FILE *tty = fdopen(fd, "r+");
+    fprintf(tty, "\n"
+        "WARNING: this rewrites the Xone:3D's firmware with an unofficial patch, tested on one unit.\n"
+        "A failed update can leave the mixer unusable. Keep it powered and connected until it finishes.\n"
+        "Type yes to flash, anything else to cancel: ");
+    fflush(tty);
+    char line[16] = {0};
+    int ok = fgets(line, sizeof line, tty) && !strcmp(line, "yes\n");
+    fclose(tty);
+    if (!ok) fprintf(stderr, "cancelled, nothing was written.\n");
+    return ok ? 0 : -1;
+}
+
 static const char *RECOVERY =
     "If the mixer misbehaves afterwards (dead display, mixer or LFO), power-cycle it and run\n"
     "x3dfix --flash again straight away. A repeated update has always recovered it so far.\n";
 
 int main(int argc, char **argv) {
-    const char *path = NULL, *save = NULL; int flash = 0;
+    setvbuf(stdout, NULL, _IOLBF, 0);   // keep stdout and stderr in order in a log file
+    const char *path = NULL, *save = NULL; int flash = 0, yes = 0, check = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--flash")) flash = 1;
+        else if (!strcmp(argv[i], "--yes")) yes = 1;
+        else if (!strcmp(argv[i], "--check")) check = 1;
         else if (!strcmp(argv[i], "--save") && i + 1 < argc) save = argv[++i];
         else path = argv[i];
     }
+    if (check) return open_device() ? 1 : check_mixer();
     if (!path) {
-        fprintf(stderr, "usage: %s [--flash | --save OUT.BIN] \"XONE3D 1.26.BIN\"\n"
-                        "  (no option)  check and patch in memory, read the mixer, change nothing\n"
-                        "  --flash      write the patched firmware to the mixer\n"
-                        "  --save OUT   write the patched image to a file, no mixer needed\n", argv[0]);
+        fprintf(stderr, "usage: %s --check\n"
+                        "       %s [--flash [--yes] | --save OUT.BIN] \"XONE3D 1.26.BIN\"\n"
+                        "  --check      report whether the fix is installed (reads only)\n"
+                        "  (no option)  check and patch the file in memory, read the mixer, change nothing\n"
+                        "  --flash      write the patched firmware to the mixer (asks you to type yes)\n"
+                        "  --yes        skip that question; only when you have accepted the risk\n"
+                        "  --save OUT   write the patched image to a file, no mixer needed\n", argv[0], argv[0]);
         return 2;
     }
 
@@ -170,6 +271,7 @@ int main(int argc, char **argv) {
         printf("dry run complete, nothing was sent to the mixer. Add --flash to write it.\n");
         return 0;
     }
+    if (!yes && confirm_flash()) return 1;
 
     // From here on an interruption leaves a half-written EEPROM: don't die on Ctrl-C / hangup.
     signal(SIGINT, SIG_IGN); signal(SIGHUP, SIG_IGN); signal(SIGTERM, SIG_IGN);
