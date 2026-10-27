@@ -26,7 +26,7 @@ create the endpoints, so the MIDI port never comes up.
 (the buffer size the firmware already uses in hardware), corrects the image checksum, and flashes
 it with A&H's own update protocol. Seven bytes change in total. The version still reads v1.26.
 
-The firmware itself is Allen & Heath's and is not included here. Download it from A&H.
+The firmware itself is Allen & Heath's and is not included here (see [What you need](#what-you-need)).
 
 Windows and Linux users probably don't need this. Forum reports suggest the stock firmware's MIDI
 works on both, but that hasn't been confirmed here.
@@ -34,9 +34,11 @@ works on both, but that hasn't been confirmed here.
 ## What you need
 
 - A Xone:3D and a Mac with the Xcode command line tools (`xcode-select --install`).
-- `XONE3D 1.26.BIN`, from Allen & Heath's Xone:3D downloads (the Mac bundle `XONE_3D_ALL_MAC.zip`
-  has it in its firmware folder). The tool checks the file's SHA-256 and refuses anything other than
-  the exact official file:
+- `XONE3D 1.26.BIN`, the official firmware file. Allen & Heath no longer offer it for download, but
+  their support team may send it on request. Copies also circulate in the files sections of some
+  Xone user groups on Facebook (it usually comes in a bundle called `XONE_3D_ALL_MAC.zip`).
+  Whatever the source, the tool checks the file's SHA-256 and refuses anything other than the exact
+  official file:
   `19cb34f028995ec011bb77585c09d3138b5c2c4de0113c9050e90867cae6b2e2`
 
 ## Use
