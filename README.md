@@ -3,6 +3,13 @@
 An unofficial tool that makes USB MIDI work again on the Allen & Heath Xone:3D with current macOS.
 It is not made, endorsed or supported by Allen & Heath.
 
+> [!CAUTION]
+> **Flashing firmware can brick your Xone:3D.** This is an unofficial tool, tested on a single unit.
+> A stalled update has so far been recovered by flashing again, but a failure at the wrong moment
+> could leave the mixer needing an EEPROM programmer to repair. Allen & Heath probably won't support
+> a mixer flashed with this tool. Read [Risks and recovery](#risks-and-recovery) before you start,
+> and only go ahead if you accept that risk.
+
 ## The problem
 
 On recent macOS (tested on macOS 27, Apple silicon) the Xone:3D works as a USB soundcard, but its
